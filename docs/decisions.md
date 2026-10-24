@@ -62,6 +62,21 @@
 - Keep the retrospective label and disclose that metrics use matched hours, hourly actuals average the two half-hours, WINDFOR interval-average semantics remain unverified, and missing/conflicting hours are excluded.
 - Treat daily metrics as a description of one delivery day, not an accuracy percentage, confidence interval, purchase buffer, or evidence of long-term reliability.
 
+## January range accuracy
+
+- Add `GET /api/wind-accuracy` with required inclusive `decision_date_from` and `decision_date_to` values and optional `cutoff_time`, defaulting to `10:00` UTC. Both dates must be in January 2026 and the start must not follow the end.
+- Build each day by calling the shared forecast retrieval/selection and FUELHH retrieval/alignment services directly. Never call an application HTTP endpoint from the backend.
+- Return one ascending daily result for every requested decision date. A successful result embeds the existing `WindComparisonResponse`; a failed result has no comparison and carries a stable public message plus `forecast` or `actual` as the failed source.
+- Keep retrieval status independent of coverage. Successful zero-match data remains a successful retrieval with unavailable metrics; an upstream failure is never fabricated as 24 missing observations.
+- Pool every non-null hourly `error_mw` from successful days for overall MAE, bias, and RMSE. Do not average daily metrics or round before aggregation.
+- Define total unmatched hours as successful-day unmatched hours plus 24 hours for every failed day. Complete requires every expected hour to match; any failed day therefore prevents complete coverage.
+- Return HTTP 200 when at least one day retrieves successfully, including partial analyses. Return HTTP 502 with one stable public message only when every requested day fails upstream. Unexpected programming errors remain server errors.
+- Limit range execution to four worker threads and guard all Elexon calls with one process-wide four-slot semaphore, so concurrent single-day and range traffic share the same upstream bound.
+- Cache only successfully validated source lists in a process-local 15-minute, 128-entry least-recently-used cache. WINDFOR keys contain the exact publication bounds; FUELHH keys contain delivery date and `WIND`. Preserve the original retrieval timestamp on cache hits and never cache failures or invalid payloads.
+- The cache is disposable, clears on process restart, and requires no migration. It is not shared across backend processes.
+- Keep Period accuracy opt-in. Draft dates remain separate from applied results, superseded requests are aborted/ignored, and daily drilldown reuses embedded rows without another request.
+- Explain that overall metrics are pooled retrospective comparisons, partial coverage may affect representativeness, actuals average two half-hours, WINDFOR interval-average semantics remain unverified, and forecast lookup retains its 24-hour limit.
+
 ## Errors and empty data
 
 - Translate Elexon transport failures and invalid top-level payloads to HTTP 502 with a stable public message.

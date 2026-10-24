@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +16,13 @@ from forecast import (
     parse_scenario,
     select_day_ahead_forecast,
 )
+from range_analysis import (
+    ALL_DAYS_FAILURE_MESSAGE,
+    WindAccuracyResponse,
+    analyze_accuracy_range,
+    parse_accuracy_range,
+)
+from source_data import records_retrieved_at
 
 app = FastAPI()
 
@@ -78,7 +83,6 @@ def wind_comparison(
 
     try:
         actual_records = fetch_fuelhh_records(delivery_date)
-        actual_retrieved_at = datetime.now(timezone.utc)
         actuals = select_half_hour_actuals(actual_records, delivery_date)
     except (httpx.HTTPError, ValueError) as error:
         raise HTTPException(
@@ -86,4 +90,25 @@ def wind_comparison(
             detail="Unable to retrieve valid actual wind generation from Elexon",
         ) from error
 
-    return build_wind_comparison(forecast, actuals, actual_retrieved_at)
+    return build_wind_comparison(
+        forecast, actuals, records_retrieved_at(actual_records)
+    )
+
+
+@app.get("/api/wind-accuracy", response_model=WindAccuracyResponse)
+def wind_accuracy(
+    decision_date_from: str,
+    decision_date_to: str,
+    cutoff_time: str = DEFAULT_CUTOFF_TIME,
+):
+    try:
+        start, end, cutoff = parse_accuracy_range(
+            decision_date_from, decision_date_to, cutoff_time
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    result = analyze_accuracy_range(start, end, cutoff)
+    if result.day_counts.successful_days == 0:
+        raise HTTPException(status_code=502, detail=ALL_DAYS_FAILURE_MESSAGE)
+    return result

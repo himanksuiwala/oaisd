@@ -92,6 +92,30 @@
 - Headless browser review confirmed the complete live summary (`858.7`, `+396.6`, and `1,084.8 MW`), retrospective label, shared coverage, and methodology disclosure.
 - Temporary in-browser mocked responses, without production-data changes, confirmed partial coverage (`2 of 24`, `22 excluded`), display-only negative-zero normalization, and unavailable coverage with all metrics labeled `Unavailable`.
 
-## Phase 5 handoff
+## Phase 5
 
-Add January date-range analysis using the same daily UTC cutoff and pooled matched hourly errors. Preserve each day’s coverage and the current alignment limitation so sparse days cannot be mistaken for accurate days.
+- [x] Add strict January range parsing and the typed `GET /api/wind-accuracy` contract.
+- [x] Reuse the forecast, actual-alignment, comparison, and daily-accuracy services for every requested day.
+- [x] Pool unrounded hourly errors and separate successful-day exclusions from failed-day hours.
+- [x] Preserve every requested day with retrieval status and stable source-specific failure details.
+- [x] Add one shared four-request upstream limit and a process-local 15-minute/128-entry LRU cache.
+- [x] Add an opt-in Period accuracy view with request-race protection, failure retry, daily results, and in-memory daily drilldown.
+- [x] Preserve the existing single-day experience and endpoints.
+
+## Phase 5 verification
+
+- Backend: `42 passed` with pytest. Tests cover 31 days/744 hours, 1 February delivery, one-day equivalence, validation, cutoff selection, pooled arithmetic, unequal daily coverage, failure denominators, zero matches, four-request concurrency, cache reuse/expiry/key separation/eviction, and failure non-caching.
+- Aggregation fixture (`+300`, `−100`, `+600`) produced MAE `333.333333…`, bias `266.666666…`, and RMSE `391.578004…` MW. Overall RMSE differs from the average of daily RMSE values.
+- Frontend: Oxlint and the TypeScript/Vite production build passed. The existing Recharts bundle advisory remains; JavaScript is approximately 900 kB minified before gzip.
+- Live one-day range for 15 January exactly matched the existing comparison endpoint’s 24 rows and daily accuracy.
+- Live 1–31 January analysis returned 31 successful daily entries, 744/744 matched hours, 1 February as the last delivery day, MAE `2013.008064516129`, bias `1729.9314516129032`, and RMSE `2505.943149370381` MW. An independent reduction of all returned hourly errors matched exactly.
+- In a clean backend process, the cold full-month service analysis took `12.85 s` and made 62 Elexon requests. An immediate cached repeat took `0.037 s` and made zero additional Elexon requests. These are observations from the verification environment, not performance guarantees.
+- Headless browser review confirmed the live full-month summary, 31/31 day counts, retrospective/methodology text, and a daily drilldown without another range request.
+- Temporary browser mocks confirmed partial-failure accounting and retry, zero-match `Unavailable` metrics, and rapid consecutive analyses retaining only the newer applied range.
+
+## Remaining limitations
+
+- The source cache is per process, in memory, and cleared by restart; multiple workers do not share entries.
+- Elexon latency determines cold analysis time, and a full cold month needs up to 62 source requests.
+- The hourly forecast/actual alignment remains a project convention because WINDFOR interval-average semantics are unverified.
+- Phase 5 intentionally adds no accuracy percentage, confidence interval, correction, purchase recommendation, export, persistent job system, or additional chart.

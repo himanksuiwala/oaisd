@@ -95,6 +95,47 @@ type ComparisonResponse = {
   hours: ComparisonHour[]
 }
 
+type RangeAccuracy = {
+  mae_mw: number | null
+  bias_mw: number | null
+  rmse_mw: number | null
+  expected_hours: number
+  matched_hours: number
+  unmatched_hours: number
+  successful_day_unmatched_hours: number
+  failed_day_hours: number
+  coverage_status: 'complete' | 'partial' | 'unavailable'
+}
+
+type DailyRangeResult = {
+  decision_date: string
+  decision_time: string
+  delivery_date: string
+  retrieval_status: 'success' | 'failed'
+  failed_source: 'forecast' | 'actual' | null
+  failure_message: string | null
+  comparison: ComparisonResponse | null
+}
+
+type RangeResponse = {
+  decision_date_from: string
+  decision_date_to: string
+  cutoff_time: string
+  first_delivery_date: string
+  last_delivery_date: string
+  unit: 'MW'
+  retrieval_lookback_hours: 24
+  alignment_policy: 'mean_of_two_half_hourly_average_mw'
+  analysis_completed_at: string
+  day_counts: {
+    expected_days: number
+    successful_days: number
+    failed_days: number
+  }
+  overall_accuracy: RangeAccuracy
+  days: DailyRangeResult[]
+}
+
 type Scenario = {
   decisionDate: string
   cutoffTime: string
@@ -356,7 +397,172 @@ function AccuracySummary({ accuracy }: { accuracy: ComparisonResponse['accuracy'
   )
 }
 
+function PeriodAccuracySummary({ accuracy }: { accuracy: RangeAccuracy }) {
+  const metrics = [
+    { label: 'Overall MAE', value: accuracy.mae_mw, description: 'Average absolute error across pooled matched hours.', signed: false },
+    { label: 'Overall bias', value: accuracy.bias_mw, description: 'Average pooled overestimate (+) or underestimate (−).', signed: true },
+    { label: 'Overall RMSE', value: accuracy.rmse_mw, description: 'Gives larger pooled hourly errors more weight.', signed: false },
+  ]
+  return (
+    <Stack as="section" aria-labelledby="period-accuracy-title" gap="3">
+      <Box>
+        <Heading as="h2" id="period-accuracy-title" size="xl">Period accuracy</Heading>
+        <Text color="fg.muted" mt="1">Based on {accuracy.matched_hours} of {accuracy.expected_hours} expected hours.</Text>
+      </Box>
+      <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} gap="3">
+        {metrics.map((metric) => (
+          <Box key={metric.label} bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p="5">
+            <Text color="fg.muted" fontSize="sm" fontWeight="medium">{metric.label}</Text>
+            <Text fontSize="2xl" fontWeight="bold" mt="1">{formatMetric(metric.value, metric.signed)}</Text>
+            <Text color="fg.muted" fontSize="sm" mt="2">{metric.description}</Text>
+          </Box>
+        ))}
+        <Box bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p="5">
+          <Text color="fg.muted" fontSize="sm" fontWeight="medium">Coverage</Text>
+          <Text fontSize="2xl" fontWeight="bold" mt="1">{accuracy.matched_hours} / {accuracy.expected_hours}</Text>
+          <Text color="fg.muted" fontSize="sm" mt="2">{accuracy.successful_day_unmatched_hours} observations excluded · {accuracy.failed_day_hours} hours lost to retrieval failures.</Text>
+        </Box>
+      </SimpleGrid>
+    </Stack>
+  )
+}
+
+type RangeScenario = { decisionDateFrom: string; decisionDateTo: string; cutoffTime: string }
+type RangeState =
+  | { status: 'idle' }
+  | { status: 'loading'; scenario: RangeScenario }
+  | { status: 'error'; scenario: RangeScenario; message: string }
+  | { status: 'success'; data: RangeResponse; scenario: RangeScenario }
+
+const DEFAULT_RANGE: RangeScenario = {
+  decisionDateFrom: '2026-01-01',
+  decisionDateTo: '2026-01-31',
+  cutoffTime: '10:00',
+}
+
+function PeriodAccuracyView() {
+  const [draft, setDraft] = useState<RangeScenario>(DEFAULT_RANGE)
+  const [state, setState] = useState<RangeState>({ status: 'idle' })
+  const [selectedDay, setSelectedDay] = useState<DailyRangeResult | null>(null)
+  const request = useRef<{ id: number; controller: AbortController } | null>(null)
+  const nextRequestId = useRef(0)
+
+  const loadAnalysis = useCallback(async (scenario: RangeScenario) => {
+    request.current?.controller.abort()
+    const controller = new AbortController()
+    const id = ++nextRequestId.current
+    request.current = { id, controller }
+    setSelectedDay(null)
+    setState({ status: 'loading', scenario })
+    const query = new URLSearchParams({
+      decision_date_from: scenario.decisionDateFrom,
+      decision_date_to: scenario.decisionDateTo,
+      cutoff_time: scenario.cutoffTime,
+    })
+    try {
+      const response = await fetch(`/api/wind-accuracy?${query}`, { signal: controller.signal })
+      if (!response.ok) throw new Error(`The period analysis service returned HTTP ${response.status}.`)
+      const data = (await response.json()) as RangeResponse
+      if (request.current?.id === id) setState({ status: 'success', data, scenario })
+    } catch (error) {
+      if (controller.signal.aborted || request.current?.id !== id) return
+      setState({ status: 'error', scenario, message: error instanceof Error ? error.message : 'An unexpected error occurred.' })
+    }
+  }, [])
+
+  useEffect(() => () => request.current?.controller.abort(), [])
+
+  function analyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void loadAnalysis({ ...draft })
+  }
+
+  const selectedComparison = selectedDay?.retrieval_status === 'success' ? selectedDay.comparison : null
+  const selectedForecastHours = selectedComparison?.hours.map((hour) => ({
+    target_time: hour.target_time,
+    generation_mw: hour.forecast_mw,
+    publish_time: hour.forecast_publish_time,
+    status: hour.forecast_status,
+  })) ?? []
+
+  return (
+    <Stack gap={{ base: 6, md: 8 }}>
+      <form onSubmit={analyze}>
+        <Box bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
+          <Stack direction={{ base: 'column', md: 'row' }} gap="4" align={{ md: 'end' }}>
+            <Field.Root required flex="1">
+              <Field.Label>Decision start date</Field.Label>
+              <Input type="date" min="2026-01-01" max="2026-01-31" value={draft.decisionDateFrom} onChange={(event) => setDraft((current) => ({ ...current, decisionDateFrom: event.target.value }))} />
+            </Field.Root>
+            <Field.Root required flex="1">
+              <Field.Label>Decision end date</Field.Label>
+              <Input type="date" min="2026-01-01" max="2026-01-31" value={draft.decisionDateTo} onChange={(event) => setDraft((current) => ({ ...current, decisionDateTo: event.target.value }))} />
+            </Field.Root>
+            <Field.Root required flex="1">
+              <Field.Label>Daily cutoff time (UTC)</Field.Label>
+              <Input type="time" value={draft.cutoffTime} onChange={(event) => setDraft((current) => ({ ...current, cutoffTime: event.target.value }))} />
+            </Field.Root>
+            <Button type="submit" colorPalette="blue">Analyze</Button>
+          </Stack>
+        </Box>
+      </form>
+
+      {state.status === 'idle' && <Text color="fg.muted">Choose a January range and select Analyze. The full month is not loaded automatically.</Text>}
+      {state.status === 'loading' && (
+        <Stack role="status" aria-live="polite" direction="row" gap="3" py="12" justify="center" align="center">
+          <Spinner size="sm" /><Text>Analyzing {state.scenario.decisionDateFrom} to {state.scenario.decisionDateTo}…</Text>
+        </Stack>
+      )}
+      {state.status === 'error' && (
+        <Alert.Root status="error" alignItems="flex-start"><Alert.Indicator /><Box flex="1"><Alert.Title>Period analysis unavailable</Alert.Title><Alert.Description>{state.message}</Alert.Description><Button mt="4" size="sm" onClick={() => void loadAnalysis(state.scenario)}>Retry analysis</Button></Box></Alert.Root>
+      )}
+      {state.status === 'success' && (
+        <Stack gap={{ base: 6, md: 8 }}>
+          <Alert.Root status="info"><Alert.Indicator /><Alert.Content><Alert.Title>Retrospective period evaluation</Alert.Title><Alert.Description>Actual generation was unavailable at the purchasing decision times.</Alert.Description></Alert.Content></Alert.Root>
+          <Flex direction={{ base: 'column', md: 'row' }} gap={{ base: 4, md: 10 }} bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
+            <Box><Text color="fg.muted" fontSize="sm">Applied decision range</Text><Text fontWeight="semibold">{formatDate(state.data.decision_date_from)} – {formatDate(state.data.decision_date_to)}</Text></Box>
+            <Box><Text color="fg.muted" fontSize="sm">Delivery range</Text><Text fontWeight="semibold">{formatDate(state.data.first_delivery_date)} – {formatDate(state.data.last_delivery_date)}</Text></Box>
+            <Box><Text color="fg.muted" fontSize="sm">Daily cutoff</Text><Text fontWeight="semibold">{state.data.cutoff_time} UTC</Text></Box>
+          </Flex>
+          {(state.data.overall_accuracy.coverage_status !== 'complete' || state.data.day_counts.failed_days > 0) && (
+            <Alert.Root status="warning"><Alert.Indicator /><Alert.Content><Alert.Title>Partial coverage</Alert.Title><Alert.Description>Overall metrics use available matched hours only. Partial coverage may affect representativeness.</Alert.Description>{state.data.day_counts.failed_days > 0 && <Button mt="3" size="sm" onClick={() => void loadAnalysis(state.scenario)}>Retry analysis</Button>}</Alert.Content></Alert.Root>
+          )}
+          <PeriodAccuracySummary accuracy={state.data.overall_accuracy} />
+          <SimpleGrid columns={{ base: 1, sm: 2 }} gap="3">
+            <Flex bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="md" p="4" justify="space-between"><Text color="fg.muted">Successful days</Text><Badge colorPalette="green">{state.data.day_counts.successful_days} / {state.data.day_counts.expected_days}</Badge></Flex>
+            <Flex bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="md" p="4" justify="space-between"><Text color="fg.muted">Failed days</Text><Badge colorPalette={state.data.day_counts.failed_days ? 'orange' : 'gray'}>{state.data.day_counts.failed_days}</Badge></Flex>
+          </SimpleGrid>
+          <Text color="fg.muted" fontSize="sm">Methodology: overall metrics pool matched hourly comparisons; they do not average daily metrics. Actual MW averages the two half-hour readings. WINDFOR interval-average semantics are unverified, and forecast lookup is limited to the preceding 24 hours.</Text>
+
+          <Stack as="section" aria-labelledby="daily-results-title" gap="3">
+            <Heading as="h2" id="daily-results-title" size="xl">Daily results</Heading>
+            <Table.ScrollArea borderWidth="1px" borderColor="border.subtle" rounded="lg">
+              <Table.Root minW="1000px" size={{ base: 'sm', md: 'md' }}>
+                <Table.Header bg="bg.subtle"><Table.Row><Table.ColumnHeader>Decision date</Table.ColumnHeader><Table.ColumnHeader>Delivery date</Table.ColumnHeader><Table.ColumnHeader textAlign="end">MAE</Table.ColumnHeader><Table.ColumnHeader textAlign="end">Bias</Table.ColumnHeader><Table.ColumnHeader textAlign="end">RMSE</Table.ColumnHeader><Table.ColumnHeader>Coverage</Table.ColumnHeader><Table.ColumnHeader>Status</Table.ColumnHeader><Table.ColumnHeader>Details</Table.ColumnHeader></Table.Row></Table.Header>
+                <Table.Body>{state.data.days.map((day) => {
+                  const accuracy = day.comparison?.accuracy
+                  return <Table.Row key={day.decision_date}><Table.Cell>{formatDate(day.decision_date)}</Table.Cell><Table.Cell>{formatDate(day.delivery_date)}</Table.Cell><Table.Cell textAlign="end">{formatMetric(accuracy?.mae_mw ?? null)}</Table.Cell><Table.Cell textAlign="end">{formatMetric(accuracy?.bias_mw ?? null, true)}</Table.Cell><Table.Cell textAlign="end">{formatMetric(accuracy?.rmse_mw ?? null)}</Table.Cell><Table.Cell>{accuracy ? `${accuracy.matched_hours} / 24` : 'Unavailable'}</Table.Cell><Table.Cell><Badge colorPalette={day.retrieval_status === 'success' ? 'green' : 'orange'}>{day.retrieval_status === 'success' ? 'Success' : `Failed: ${day.failed_source}`}</Badge>{day.failure_message && <Text color="fg.muted" fontSize="xs" mt="1">{day.failure_message}</Text>}</Table.Cell><Table.Cell>{day.retrieval_status === 'success' ? <Button size="xs" variant="outline" onClick={() => setSelectedDay(day)}>Open comparison</Button> : 'No details'}</Table.Cell></Table.Row>
+                })}</Table.Body>
+              </Table.Root>
+            </Table.ScrollArea>
+          </Stack>
+
+          {selectedComparison && selectedDay && (
+            <Stack as="section" aria-labelledby="selected-day-title" gap="5" bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
+              <Box><Heading as="h2" id="selected-day-title" size="xl">Daily comparison detail</Heading><Text color="fg.muted">Decision {formatTimestamp(selectedDay.decision_time)} · Delivery {formatDate(selectedDay.delivery_date)}. Daily metrics are separate from the period summary.</Text></Box>
+              <AccuracySummary accuracy={selectedComparison.accuracy} />
+              <ForecastChart hours={selectedForecastHours} comparisonHours={selectedComparison.hours} />
+              <ComparisonTable hours={selectedComparison.hours} />
+            </Stack>
+          )}
+        </Stack>
+      )}
+    </Stack>
+  )
+}
+
 export function App() {
+  const [view, setView] = useState<'single' | 'period'>('single')
   const [draft, setDraft] = useState<Scenario>(DEFAULT_SCENARIO)
   const [forecastState, setForecastState] = useState<ForecastState>({ status: 'loading', scenario: DEFAULT_SCENARIO })
   const [comparisonState, setComparisonState] = useState<ComparisonState>({ status: 'off' })
@@ -474,6 +680,14 @@ export function App() {
             </Text>
           </Stack>
 
+          <Flex gap="2" aria-label="Analysis view">
+            <Button variant={view === 'single' ? 'solid' : 'outline'} colorPalette="blue" onClick={() => setView('single')}>Single-day forecast/comparison</Button>
+            <Button variant={view === 'period' ? 'solid' : 'outline'} colorPalette="blue" onClick={() => setView('period')}>Period accuracy</Button>
+          </Flex>
+
+          {view === 'period' && <PeriodAccuracyView />}
+
+          {view === 'single' && <>
           <form onSubmit={applyScenario}>
             <Box bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
               <Stack gap="5">
@@ -582,6 +796,7 @@ export function App() {
               </Stack>
             </Stack>
           )}
+          </>}
         </Stack>
       </Container>
     </Box>

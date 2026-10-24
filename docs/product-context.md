@@ -4,7 +4,7 @@
 
 Help an electricity purchasing team understand the Elexon wind forecasts that were available when making day-ahead decisions in January 2026. This application analyzes forecasts; it does not recommend or execute electricity purchases.
 
-## Phase 4 experience
+## Phase 5 experience
 
 - A trader selects a decision date from 1–31 January 2026 and a UTC cutoff time.
 - Delivery is the following UTC calendar day, including 1 February for a 31 January decision.
@@ -15,6 +15,9 @@ Help an electricity purchasing team understand the Elexon wind forecasts that we
 - The comparison is retrospective: actual generation was unavailable at the purchasing decision time.
 - A successful comparison summarizes daily MAE, bias, and RMSE above the profile chart, with the shared matched-hour coverage and excluded-hour count.
 - Metric values are calculated from unrounded hourly errors and displayed to one decimal place. Positive bias is marked with `+`; display-only negative zero is normalized to zero.
+- A separate Period accuracy view evaluates an inclusive January decision-date range at one consistent daily UTC cutoff. It defaults to 1–31 January at 10:00 but does not load until requested.
+- Period results show pooled hourly MAE, bias, and RMSE; matched and expected hours; successful and failed days; excluded observations; and hours lost to retrieval failures.
+- Every requested day remains visible. Successful days can be opened using comparison rows already returned by the range analysis; failed days retain their source-specific public error.
 
 ## Working assumptions
 
@@ -31,10 +34,13 @@ Help an electricity purchasing team understand the Elexon wind forecasts that we
 - MAE is the mean absolute hourly error, bias is the mean signed hourly error, and RMSE is the square root of the mean squared hourly errors.
 - All three metrics use the same matched hourly pairs. Missing and conflicting hours are excluded; genuine zero generation remains eligible.
 - Metric coverage is complete for 24 matched hours, partial for 1–23, and unavailable for zero. With zero matched hours all metric values are null, never zero.
+- Period metrics pool valid hourly errors across successful days. They never average daily metrics, and failed days contribute 24 unmatched hours to the expected denominator.
+- A successful retrieval with zero matches is different from an upstream retrieval failure. Retrieval status and metric coverage are separate concepts.
+- Period analysis is retrospective. It does not imply that actual generation or accuracy metrics were available at the historical purchasing decision times.
 
-## Out of scope for Phase 4
+## Out of scope for Phase 5
 
-- Month-wide analysis.
 - Forecast bias correction.
 - Confidence intervals or an accuracy percentage.
 - Purchase recommendations or execution.
+- Exports, additional charts, and persistent cache infrastructure.

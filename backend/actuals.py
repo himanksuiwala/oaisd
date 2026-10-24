@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel
 
 from forecast import Coverage, ForecastResponse, parse_utc
+from source_data import fetch_records
 
 ELEXON_FUELHH_URL = "https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELHH/stream"
 ALIGNMENT_POLICY = "mean_of_two_half_hourly_average_mw"
@@ -80,14 +81,12 @@ def fetch_fuelhh_records(delivery_date: date) -> list[dict[str, Any]]:
         "settlementDateTo": delivery_date.isoformat(),
         "fuelType": "WIND",
     }
-    with httpx.Client(timeout=15.0) as client:
-        response = client.get(ELEXON_FUELHH_URL, params=params)
-        response.raise_for_status()
-        payload = response.json()
-
-    if not isinstance(payload, list):
-        raise ValueError("Elexon FUELHH returned an unexpected response shape")
-    return payload
+    return fetch_records(
+        cache_key=("FUELHH", delivery_date.isoformat(), "WIND"),
+        url=ELEXON_FUELHH_URL,
+        params=params,
+        invalid_payload_message="Elexon FUELHH returned an unexpected response shape",
+    )
 
 
 def select_half_hour_actuals(

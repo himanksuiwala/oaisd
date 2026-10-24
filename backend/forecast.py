@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from source_data import fetch_records
+
 ELEXON_WINDFOR_URL = "https://data.elexon.co.uk/bmrs/api/v1/datasets/WINDFOR/stream"
 DEFAULT_DECISION_DATE = "2026-01-15"
 DEFAULT_CUTOFF_TIME = "10:00"
@@ -71,14 +73,17 @@ def fetch_windfor_records(decision_time: datetime) -> list[dict[str, Any]]:
         ).isoformat(),
         "publishDateTimeTo": decision_time.isoformat(),
     }
-    with httpx.Client(timeout=15.0) as client:
-        response = client.get(ELEXON_WINDFOR_URL, params=params)
-        response.raise_for_status()
-        payload = response.json()
-
-    if not isinstance(payload, list):
-        raise ValueError("Elexon WINDFOR returned an unexpected response shape")
-    return payload
+    cache_key = (
+        "WINDFOR",
+        params["publishDateTimeFrom"],
+        params["publishDateTimeTo"],
+    )
+    return fetch_records(
+        cache_key=cache_key,
+        url=ELEXON_WINDFOR_URL,
+        params=params,
+        invalid_payload_message="Elexon WINDFOR returned an unexpected response shape",
+    )
 
 
 def select_day_ahead_forecast(

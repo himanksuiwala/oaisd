@@ -93,8 +93,8 @@ def select_day_ahead_forecast(
 
     for record in records:
         try:
-            target_time = _parse_utc(record["startTime"])
-            publish_time = _parse_utc(record["publishTime"])
+            target_time = parse_utc(record["startTime"])
+            publish_time = parse_utc(record["publishTime"])
             generation = float(record["generation"])
         except (KeyError, TypeError, ValueError):
             continue
@@ -163,7 +163,7 @@ def select_day_ahead_forecast(
     )
 
 
-def _parse_utc(value: str) -> datetime:
+def parse_utc(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("Timestamp must include a UTC offset")

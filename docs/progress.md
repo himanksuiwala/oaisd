@@ -49,6 +49,30 @@
 - Browser: controls, applied scenario, coverage, chart, and table were reviewed for all three boundary/default dates.
 - Browser request race: January 1 and January 31 were applied consecutively before the first request completed; only the January 31 cutoff and February 1 delivery result was displayed.
 
-## Phase 3 handoff
+## Phase 3
 
-Introduce actual wind generation from Elexon `FUELHH`, define the hourly alignment/aggregation policy for half-hourly outturn, and calculate forecast error only after those domain decisions are documented and tested. Preserve the selected forecast publication timestamp as provenance for every comparison.
+- [x] Verify the official FUELHH contract, units, half-hour semantics, boundaries, and representative records.
+- [x] Document the forecast/actual semantic limitation and explicit hourly averaging convention.
+- [x] Add FUELHH retrieval, local WIND/day filtering, duplicate handling, and exact half-hour enumeration.
+- [x] Add `GET /api/wind-comparison` with 24 aligned rows and separate coverage.
+- [x] Preserve `GET /api/wind-forecast` behavior and forecast selection reuse.
+- [x] Add the optional retrospective comparison UI, dual-series chart, source-reading details, and signed errors.
+- [x] Preserve forecast usability and retry when actual retrieval fails.
+- [x] Add focused backend comparison and regression tests.
+- [x] Complete live comparison review for January 1, January 15, and January 31 decisions.
+
+## Phase 3 verification
+
+- Backend: `18 passed` with pytest, including all Phase 1/2 forecast regressions and the Phase 3 averaging, signed error, genuine-zero, missing/conflict, duplicate, filtering, 23:00 alignment, February delivery, matched coverage, and actual-upstream failure cases.
+- Frontend: Oxlint passed without warnings.
+- Frontend: TypeScript and Vite production build passed. The existing Recharts bundle-size advisory remains; the minified JavaScript bundle is approximately 888 kB before gzip.
+- Live January 1 decision: January 2 delivery returned 24 forecast, 24 actual, and 24 matched hours. The first hourly actual was `(15,228 + 15,505) / 2 = 15,366.5 MW`; error was `18,699 − 15,366.5 = +3,332.5 MW`.
+- Live January 15 decision: January 16 delivery returned 24/24/24 coverage. The first hourly actual was `(7,477 + 7,194) / 2 = 7,335.5 MW`; error was `+136.5 MW`.
+- Live January 31 decision: February 1 delivery returned 24/24/24 coverage. The 23:00 row used the 23:00 and 23:30 readings, averaged to 5,216 MW, and produced `−209 MW` error.
+- All three responses contained exactly 24 rows; every selected forecast publication was at or before its applied cutoff, and every non-null error matched forecast minus actual.
+- Browser: forecast and actual chart series, coverage, signed errors, publication provenance, and accessible half-hour disclosures agreed with the API for all three scenarios.
+- Browser race: disabling comparison immediately after applying a new scenario aborted/ignored the comparison request and displayed only the correct new forecast result.
+
+## Phase 4 handoff
+
+Calculate daily MAE, RMSE, and bias from matched hourly rows only. Keep coverage and unmatched-hour counts beside every metric so missing data cannot be mistaken for accuracy.

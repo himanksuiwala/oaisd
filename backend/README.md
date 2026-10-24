@@ -13,3 +13,4 @@ uvicorn main:app --reload --port 8000
 - Decision dates are restricted to January 2026; invalid inputs return HTTP 422.
 - Comparison endpoint: `GET /api/wind-comparison` with the same query parameters and defaults.
 - The comparison averages the WIND FUELHH readings at H and H+30 and returns signed forecast-minus-actual error for matched hours.
+- The comparison includes MAE, bias, and RMSE calculated from its matched hourly rows, plus complete/partial/unavailable coverage metadata.

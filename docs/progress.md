@@ -73,6 +73,25 @@
 - Browser: forecast and actual chart series, coverage, signed errors, publication provenance, and accessible half-hour disclosures agreed with the API for all three scenarios.
 - Browser race: disabling comparison immediately after applying a new scenario aborted/ignored the comparison request and displayed only the correct new forecast result.
 
-## Phase 4 handoff
+## Phase 4
 
-Calculate daily MAE, RMSE, and bias from matched hourly rows only. Keep coverage and unmatched-hour counts beside every metric so missing data cannot be mistaken for accuracy.
+- [x] Add a reusable, network-independent daily accuracy calculator.
+- [x] Extend the comparison response with MAE, bias, RMSE, matched counts, and coverage status.
+- [x] Keep existing comparison retrieval, alignment, chart, table, provenance, error handling, and request-race protection unchanged.
+- [x] Add comparison-only Chakra UI summaries, shared coverage, and methodology disclosure above the existing chart.
+- [x] Cover complete, partial, unavailable, perfect, zero-generation, missing/conflict, and unrounded calculation behavior with focused backend tests.
+- [x] Independently recalculate a live complete-day response from its hourly rows.
+
+## Phase 4 verification
+
+- Backend: `27 passed` with pytest, including the hand-checkable `+300`/`−100` fixture: MAE `200`, bias `+100`, and RMSE approximately `223.60679775` MW.
+- Focused tests verify perfect predictions, zero and one matched rows, missing/conflicting exclusions, genuine zero generation, unrounded inputs, coverage agreement, and the additive API response.
+- Frontend: Oxlint passed without warnings; TypeScript and the Vite production build passed. The existing Recharts bundle-size advisory remains (approximately 891 kB minified before gzip).
+- Live default comparison: 24 matched hours produced MAE `858.7083333333334`, bias `396.625`, and RMSE `1084.8288075390822` MW. An independent reduction of the 24 response-row errors matched every reported value exactly.
+- The successful complete-day response reports `complete`, 24 matched, and zero excluded hours. Controlled automated fixtures verify `partial` for one matched row and `unavailable` with null metrics for zero matched rows.
+- Headless browser review confirmed the complete live summary (`858.7`, `+396.6`, and `1,084.8 MW`), retrospective label, shared coverage, and methodology disclosure.
+- Temporary in-browser mocked responses, without production-data changes, confirmed partial coverage (`2 of 24`, `22 excluded`), display-only negative-zero normalization, and unavailable coverage with all metrics labeled `Unavailable`.
+
+## Phase 5 handoff
+
+Add January date-range analysis using the same daily UTC cutoff and pooled matched hourly errors. Preserve each day’s coverage and the current alignment limitation so sparse days cannot be mistaken for accurate days.

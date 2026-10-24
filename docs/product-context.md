@@ -4,7 +4,7 @@
 
 Help an electricity purchasing team understand the Elexon wind forecasts that were available when making day-ahead decisions in January 2026. This application analyzes forecasts; it does not recommend or execute electricity purchases.
 
-## Phase 3 experience
+## Phase 4 experience
 
 - A trader selects a decision date from 1–31 January 2026 and a UTC cutoff time.
 - Delivery is the following UTC calendar day, including 1 February for a 31 January decision.
@@ -13,6 +13,8 @@ Help an electricity purchasing team understand the Elexon wind forecasts that we
 - A locally controlled comparison option, off by default, adds actual wind generation for the derived delivery day.
 - Output: separate forecast, actual, and matched coverage; a dual-series profile chart; and one detailed row for every UTC delivery hour.
 - The comparison is retrospective: actual generation was unavailable at the purchasing decision time.
+- A successful comparison summarizes daily MAE, bias, and RMSE above the profile chart, with the shared matched-hour coverage and excluded-hour count.
+- Metric values are calculated from unrounded hourly errors and displayed to one decimal place. Positive bias is marked with `+`; display-only negative zero is normalized to zero.
 
 ## Working assumptions
 
@@ -26,10 +28,13 @@ Help an electricity purchasing team understand the Elexon wind forecasts that we
 - Hourly actual generation is the arithmetic mean of the documented FUELHH half-hour averages at H and H+30. Both readings are required; values are never summed, interpolated, or filled.
 - Elexon does not document current hourly WINDFOR values as interval averages. Comparing the hourly forecast with the derived hourly FUELHH average is a project comparison convention, not a verified semantic equivalence.
 - Signed error is forecast MW minus actual MW and is calculated only for matched valid hours.
+- MAE is the mean absolute hourly error, bias is the mean signed hourly error, and RMSE is the square root of the mean squared hourly errors.
+- All three metrics use the same matched hourly pairs. Missing and conflicting hours are excluded; genuine zero generation remains eligible.
+- Metric coverage is complete for 24 matched hours, partial for 1–23, and unavailable for zero. With zero matched hours all metric values are null, never zero.
 
-## Out of scope for Phase 3
+## Out of scope for Phase 4
 
-- Summary accuracy metrics such as MAE, RMSE, and bias.
 - Month-wide analysis.
 - Forecast bias correction.
+- Confidence intervals or an accuracy percentage.
 - Purchase recommendations or execution.

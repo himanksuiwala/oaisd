@@ -83,6 +83,15 @@ type ComparisonResponse = {
       unmatched_hours: number
     }
   }
+  accuracy: {
+    mae_mw: number | null
+    bias_mw: number | null
+    rmse_mw: number | null
+    matched_hours: number
+    expected_hours: 24
+    unmatched_hours: number
+    coverage_status: 'complete' | 'partial' | 'unavailable'
+  }
   hours: ComparisonHour[]
 }
 
@@ -135,6 +144,18 @@ function formatError(value: number | null) {
   if (value === 0) return '0'
   const magnitude = Math.abs(value).toLocaleString('en-GB', { maximumFractionDigits: 1 })
   return value > 0 ? `+${magnitude}` : `−${magnitude}`
+}
+
+function formatMetric(value: number | null, signed = false) {
+  if (value === null) return 'Unavailable'
+  const rounded = Math.round(value * 10) / 10
+  const normalized = Object.is(rounded, -0) ? 0 : rounded
+  const formatted = Math.abs(normalized).toLocaleString('en-GB', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })
+  if (!signed || normalized === 0) return `${formatted} MW`
+  return `${normalized > 0 ? '+' : '−'}${formatted} MW`
 }
 
 function statusBadge(status: DataStatus) {
@@ -281,6 +302,57 @@ function ComparisonCoverage({ data }: { data: ComparisonResponse }) {
         </Flex>
       ))}
     </SimpleGrid>
+  )
+}
+
+function AccuracySummary({ accuracy }: { accuracy: ComparisonResponse['accuracy'] }) {
+  const metrics = [
+    { label: 'MAE', value: accuracy.mae_mw, description: 'Average size of the hourly error.', signed: false },
+    { label: 'Bias', value: accuracy.bias_mw, description: 'Average overestimate (+) or underestimate (−).', signed: true },
+    { label: 'RMSE', value: accuracy.rmse_mw, description: 'Gives larger errors more weight.', signed: false },
+  ]
+  const statusLabel = accuracy.coverage_status === 'complete'
+    ? 'Complete coverage'
+    : accuracy.coverage_status === 'partial'
+      ? 'Partial coverage'
+      : 'Unavailable'
+
+  return (
+    <Stack as="section" aria-labelledby="accuracy-title" gap="3">
+      <Box>
+        <Heading as="h2" id="accuracy-title" size="xl">Daily forecast accuracy</Heading>
+        <Text color="fg.muted" mt="1">Based on {accuracy.matched_hours} of 24 hours; {accuracy.unmatched_hours} hours excluded.</Text>
+      </Box>
+      <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} gap="3">
+        {metrics.map((metric) => (
+          <Box key={metric.label} bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p="5">
+            <Text color="fg.muted" fontSize="sm" fontWeight="medium">{metric.label}</Text>
+            <Text fontSize="2xl" fontWeight="bold" mt="1">{formatMetric(metric.value, metric.signed)}</Text>
+            <Text color="fg.muted" fontSize="sm" mt="2">{metric.description}</Text>
+          </Box>
+        ))}
+        <Box bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p="5">
+          <Text color="fg.muted" fontSize="sm" fontWeight="medium">Coverage</Text>
+          <Badge
+            colorPalette={accuracy.coverage_status === 'complete' ? 'green' : accuracy.coverage_status === 'partial' ? 'orange' : 'gray'}
+            mt="2"
+            size="lg"
+          >
+            {statusLabel}
+          </Badge>
+          <Text color="fg.muted" fontSize="sm" mt="3">
+            {accuracy.coverage_status === 'complete'
+              ? 'All expected delivery hours are included.'
+              : accuracy.coverage_status === 'partial'
+                ? 'Metrics describe matched hours only.'
+                : 'No valid forecast-actual pairs exist.'}
+          </Text>
+        </Box>
+      </SimpleGrid>
+      <Text color="fg.muted" fontSize="sm">
+        Methodology: metrics use matched hourly pairs. Hourly actual MW averages the two half-hour readings. WINDFOR interval-average semantics are unverified, so this alignment is a project convention. Missing and conflicting hours are excluded.
+      </Text>
+    </Stack>
   )
 }
 
@@ -489,6 +561,8 @@ export function App() {
                   </Alert.Content>
                 </Alert.Root>
               )}
+
+              {comparisonData && <AccuracySummary accuracy={comparisonData.accuracy} />}
 
               <Stack as="section" aria-labelledby="forecast-chart-title" gap="3">
                 <Box>

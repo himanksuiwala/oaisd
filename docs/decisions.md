@@ -49,6 +49,19 @@
 - Half-hour source readings are available in chart tooltips and accessible table disclosure details.
 - Superseded forecast and comparison requests use separate AbortControllers and request IDs tied to one applied-scenario version.
 
+## Daily accuracy metrics
+
+- Extend `GET /api/wind-comparison` additively with an `accuracy` object. Do not add an endpoint or make another Elexon request.
+- Calculate metrics in a pure, network-independent function from non-null `error_mw` values already present in the 24 comparison rows. All metrics share that same valid-pair set.
+- Define MAE as `mean(abs(forecast - actual))`, bias as `mean(forecast - actual)`, and RMSE as `sqrt(mean((forecast - actual)²))`.
+- Calculate with unrounded floating-point values. Round only in the UI to one decimal place; show a plus sign for positive bias and normalize display-only negative zero to zero.
+- Return `matched_hours`, `expected_hours: 24`, `unmatched_hours`, and `coverage_status` beside the metrics. `complete` means 24 matches, `partial` means 1–23, and `unavailable` means zero.
+- Return null MAE, bias, and RMSE when no matched rows exist. A single match produces valid metrics with partial coverage. Genuine zero forecast or actual values remain eligible.
+- Derive both the existing matched coverage and the accuracy counts from the same accuracy result so their counts cannot diverge.
+- Show accuracy only for a successful current comparison. Place MAE, bias, RMSE, and shared coverage above the existing chart; hide them while comparison is off, loading, or failed.
+- Keep the retrospective label and disclose that metrics use matched hours, hourly actuals average the two half-hours, WINDFOR interval-average semantics remain unverified, and missing/conflicting hours are excluded.
+- Treat daily metrics as a description of one delivery day, not an accuracy percentage, confidence interval, purchase buffer, or evidence of long-term reliability.
+
 ## Errors and empty data
 
 - Translate Elexon transport failures and invalid top-level payloads to HTTP 502 with a stable public message.

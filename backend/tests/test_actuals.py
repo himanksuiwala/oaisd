@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import main
-from actuals import build_wind_comparison, select_half_hour_actuals
+from actuals import ComparisonHour, build_wind_comparison, calculate_accuracy, select_half_hour_actuals
 from forecast import select_day_ahead_forecast
 
 DELIVERY_DATE = date(2026, 1, 16)
@@ -60,6 +63,19 @@ def comparison(
     )
     return build_wind_comparison(
         forecast, actuals, datetime(2026, 2, 2, tzinfo=timezone.utc)
+    )
+
+
+def metric_hour(error_mw: float | None) -> ComparisonHour:
+    return ComparisonHour(
+        target_time=datetime(2026, 1, 16, tzinfo=timezone.utc),
+        forecast_mw=None,
+        forecast_publish_time=None,
+        forecast_status="missing",
+        actual_readings=[],
+        actual_mw=None,
+        actual_status="missing",
+        error_mw=error_mw,
     )
 
 
@@ -259,3 +275,106 @@ def test_actual_upstream_failure_is_distinct_and_forecast_endpoint_is_unchanged(
     }
     assert forecast_response.status_code == 200
     assert len(forecast_response.json()["hours"]) == 24
+
+
+def test_accuracy_uses_hand_checkable_errors() -> None:
+    accuracy = calculate_accuracy([metric_hour(300), metric_hour(-100)])
+
+    assert accuracy.mae_mw == 200
+    assert accuracy.bias_mw == 100
+    assert accuracy.rmse_mw == pytest.approx(223.60679775)
+    assert accuracy.matched_hours == 2
+    assert accuracy.unmatched_hours == 22
+    assert accuracy.coverage_status == "partial"
+
+
+def test_perfect_predictions_return_zero_metrics() -> None:
+    accuracy = calculate_accuracy([metric_hour(0), metric_hour(0)])
+
+    assert accuracy.mae_mw == 0
+    assert accuracy.bias_mw == 0
+    assert accuracy.rmse_mw == 0
+
+
+def test_zero_matched_rows_return_null_metrics_and_unavailable_coverage() -> None:
+    accuracy = calculate_accuracy([metric_hour(None) for _ in range(24)])
+
+    assert accuracy.mae_mw is None
+    assert accuracy.bias_mw is None
+    assert accuracy.rmse_mw is None
+    assert accuracy.matched_hours == 0
+    assert accuracy.unmatched_hours == 24
+    assert accuracy.coverage_status == "unavailable"
+
+
+def test_one_matched_row_produces_partial_coverage() -> None:
+    accuracy = calculate_accuracy([metric_hour(-75)])
+
+    assert accuracy.mae_mw == 75
+    assert accuracy.bias_mw == -75
+    assert accuracy.rmse_mw == 75
+    assert accuracy.coverage_status == "partial"
+
+
+def test_missing_and_conflicting_rows_are_excluded_from_accuracy() -> None:
+    result = comparison(12000, 10000, 12000)
+
+    assert result.accuracy.matched_hours == 1
+    assert result.accuracy.mae_mw == 1000
+    assert result.accuracy.bias_mw == 1000
+    assert result.accuracy.rmse_mw == 1000
+
+
+def test_genuine_zero_generation_remains_eligible_for_accuracy() -> None:
+    result = comparison(300, 0, 0)
+
+    assert result.hours[0].actual_mw == 0
+    assert result.accuracy.matched_hours == 1
+    assert result.accuracy.mae_mw == 300
+
+
+def test_accuracy_uses_unrounded_errors() -> None:
+    accuracy = calculate_accuracy([metric_hour(0.04), metric_hour(0.06)])
+
+    assert accuracy.mae_mw == pytest.approx(0.05)
+    assert accuracy.bias_mw == pytest.approx(0.05)
+    assert accuracy.rmse_mw == pytest.approx(0.0509901951)
+
+
+def test_accuracy_counts_agree_with_matched_coverage() -> None:
+    result = comparison(12000, 10000, 12000)
+
+    assert result.accuracy.matched_hours == result.coverage.matched.matched_hours
+    assert result.accuracy.unmatched_hours == result.coverage.matched.unmatched_hours
+    assert result.accuracy.expected_hours == result.coverage.matched.expected_hours
+
+
+def test_comparison_api_response_includes_accuracy_summary(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "fetch_windfor_records",
+        lambda decision_time: [
+            forecast_record("2026-01-16T00:00:00Z", 12000),
+        ],
+    )
+    monkeypatch.setattr(
+        main,
+        "fetch_fuelhh_records",
+        lambda delivery_date: [
+            actual_record("2026-01-16T00:00:00Z", 10000, "2026-01-16T00:30:00Z"),
+            actual_record("2026-01-16T00:30:00Z", 12000, "2026-01-16T01:00:00Z"),
+        ],
+    )
+
+    response = TestClient(main.app).get("/api/wind-comparison")
+
+    assert response.status_code == 200
+    assert response.json()["accuracy"] == {
+        "mae_mw": 1000.0,
+        "bias_mw": 1000.0,
+        "rmse_mw": 1000.0,
+        "matched_hours": 1,
+        "expected_hours": 24,
+        "unmatched_hours": 23,
+        "coverage_status": "partial",
+    }

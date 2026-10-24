@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from math import fsum, sqrt
 from typing import Any, Literal, Optional
 
 import httpx
@@ -47,6 +48,16 @@ class ComparisonCoverage(BaseModel):
     matched: MatchedCoverage
 
 
+class AccuracySummary(BaseModel):
+    mae_mw: Optional[float]
+    bias_mw: Optional[float]
+    rmse_mw: Optional[float]
+    matched_hours: int
+    expected_hours: Literal[24] = 24
+    unmatched_hours: int
+    coverage_status: Literal["complete", "partial", "unavailable"]
+
+
 class WindComparisonResponse(BaseModel):
     decision_time: datetime
     delivery_date: date
@@ -59,6 +70,7 @@ class WindComparisonResponse(BaseModel):
     actual_retrieved_at: datetime
     alignment_policy: Literal["mean_of_two_half_hourly_average_mw"] = ALIGNMENT_POLICY
     coverage: ComparisonCoverage
+    accuracy: AccuracySummary
     hours: list[ComparisonHour]
 
 
@@ -141,6 +153,35 @@ def select_half_hour_actuals(
     return ActualDay(source_record_count=len(records), readings=readings)
 
 
+def calculate_accuracy(hours: list[ComparisonHour]) -> AccuracySummary:
+    """Calculate daily metrics from valid matched hourly errors only."""
+    errors = [hour.error_mw for hour in hours if hour.error_mw is not None]
+    matched_hours = len(errors)
+    unmatched_hours = 24 - matched_hours
+
+    if matched_hours == 0:
+        return AccuracySummary(
+            mae_mw=None,
+            bias_mw=None,
+            rmse_mw=None,
+            matched_hours=0,
+            unmatched_hours=24,
+            coverage_status="unavailable",
+        )
+
+    mae_mw = fsum(abs(error) for error in errors) / matched_hours
+    bias_mw = fsum(errors) / matched_hours
+    rmse_mw = sqrt(fsum(error * error for error in errors) / matched_hours)
+    return AccuracySummary(
+        mae_mw=mae_mw,
+        bias_mw=bias_mw,
+        rmse_mw=rmse_mw,
+        matched_hours=matched_hours,
+        unmatched_hours=unmatched_hours,
+        coverage_status="complete" if matched_hours == 24 else "partial",
+    )
+
+
 def build_wind_comparison(
     forecast: ForecastResponse,
     actuals: ActualDay,
@@ -195,7 +236,7 @@ def build_wind_comparison(
     actual_available = sum(hour.actual_status == "available" for hour in hours)
     actual_missing = sum(hour.actual_status == "missing" for hour in hours)
     actual_conflicting = sum(hour.actual_status == "conflict" for hour in hours)
-    matched = sum(hour.error_mw is not None for hour in hours)
+    accuracy = calculate_accuracy(hours)
 
     return WindComparisonResponse(
         decision_time=forecast.decision_time,
@@ -212,9 +253,10 @@ def build_wind_comparison(
                 conflicting_hours=actual_conflicting,
             ),
             matched=MatchedCoverage(
-                matched_hours=matched,
-                unmatched_hours=24 - matched,
+                matched_hours=accuracy.matched_hours,
+                unmatched_hours=accuracy.unmatched_hours,
             ),
         ),
+        accuracy=accuracy,
         hours=hours,
     )

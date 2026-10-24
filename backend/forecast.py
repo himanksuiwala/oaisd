@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+import re
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal, Optional
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 ELEXON_WINDFOR_URL = "https://data.elexon.co.uk/bmrs/api/v1/datasets/WINDFOR/stream"
-DECISION_TIME = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
-DELIVERY_DATE = date(2026, 1, 16)
+DEFAULT_DECISION_DATE = "2026-01-15"
+DEFAULT_CUTOFF_TIME = "10:00"
+RETRIEVAL_LOOKBACK_HOURS = 24
 
 
 class ForecastHour(BaseModel):
@@ -26,14 +28,48 @@ class ForecastResponse(BaseModel):
     unit: Literal["MW"] = "MW"
     source: Literal["Elexon WINDFOR"] = "Elexon WINDFOR"
     source_record_count: int
+    retrieval_lookback_hours: Literal[24] = RETRIEVAL_LOOKBACK_HOURS
+    coverage: "Coverage"
     hours: list[ForecastHour]
 
 
-def fetch_windfor_records() -> list[dict[str, Any]]:
+class Coverage(BaseModel):
+    expected_hours: Literal[24] = 24
+    available_hours: int
+    missing_hours: int
+    conflicting_hours: int
+
+
+ForecastResponse.model_rebuild()
+
+
+def parse_scenario(decision_date: str, cutoff_time: str) -> tuple[datetime, date]:
+    """Strictly parse a January 2026 UTC decision and its next-day delivery."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", decision_date):
+        raise ValueError("decision_date must use YYYY-MM-DD")
+    if not re.fullmatch(r"\d{2}:\d{2}", cutoff_time):
+        raise ValueError("cutoff_time must use HH:mm")
+
+    try:
+        parsed_date = date.fromisoformat(decision_date)
+        parsed_time = time.fromisoformat(cutoff_time)
+    except ValueError as error:
+        raise ValueError("decision_date or cutoff_time is not a valid value") from error
+
+    if not date(2026, 1, 1) <= parsed_date <= date(2026, 1, 31):
+        raise ValueError("decision_date must be in January 2026")
+
+    decision_time = datetime.combine(parsed_date, parsed_time, timezone.utc)
+    return decision_time, parsed_date + timedelta(days=1)
+
+
+def fetch_windfor_records(decision_time: datetime) -> list[dict[str, Any]]:
     """Fetch the publications available during the 24 hours before the cutoff."""
     params = {
-        "publishDateTimeFrom": (DECISION_TIME - timedelta(days=1)).isoformat(),
-        "publishDateTimeTo": DECISION_TIME.isoformat(),
+        "publishDateTimeFrom": (
+            decision_time - timedelta(hours=RETRIEVAL_LOOKBACK_HOURS)
+        ).isoformat(),
+        "publishDateTimeTo": decision_time.isoformat(),
     }
     with httpx.Client(timeout=15.0) as client:
         response = client.get(ELEXON_WINDFOR_URL, params=params)
@@ -47,8 +83,8 @@ def fetch_windfor_records() -> list[dict[str, Any]]:
 
 def select_day_ahead_forecast(
     records: list[dict[str, Any]],
-    decision_time: datetime = DECISION_TIME,
-    delivery_date: date = DELIVERY_DATE,
+    decision_time: datetime,
+    delivery_date: date,
 ) -> ForecastResponse:
     """Select the latest eligible forecast publication for every delivery hour."""
     delivery_start = datetime.combine(delivery_date, datetime.min.time(), timezone.utc)
@@ -110,10 +146,19 @@ def select_day_ahead_forecast(
             )
         )
 
+    available_hours = sum(hour.status == "available" for hour in hours)
+    missing_hours = sum(hour.status == "missing" for hour in hours)
+    conflicting_hours = sum(hour.status == "conflict" for hour in hours)
+
     return ForecastResponse(
         decision_time=decision_time,
         delivery_date=delivery_date,
         source_record_count=len(records),
+        coverage=Coverage(
+            available_hours=available_hours,
+            missing_hours=missing_hours,
+            conflicting_hours=conflicting_hours,
+        ),
         hours=hours,
     )
 

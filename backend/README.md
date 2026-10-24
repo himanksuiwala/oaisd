@@ -7,4 +7,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-- Endpoint: `GET /api/test`
+- Forecast endpoint: `GET /api/wind-forecast`
+- Optional query parameters: `decision_date=YYYY-MM-DD` and `cutoff_time=HH:mm` (UTC).
+- Defaults: `decision_date=2026-01-15` and `cutoff_time=10:00`.
+- Decision dates are restricted to January 2026; invalid inputs return HTTP 422.

@@ -4,15 +4,18 @@ import {
   Box,
   Button,
   Container,
+  Field,
   Flex,
   Heading,
-  HStack,
+  Input,
+  SimpleGrid,
   Spinner,
   Stack,
   Table,
   Text,
 } from '@chakra-ui/react'
-import { useCallback, useEffect, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { ForecastChart } from './ForecastChart.tsx'
 
 type ForecastStatus = 'available' | 'missing' | 'conflict'
 
@@ -29,13 +32,30 @@ type ForecastResponse = {
   unit: 'MW'
   source: 'Elexon WINDFOR'
   source_record_count: number
+  retrieval_lookback_hours: 24
+  coverage: {
+    expected_hours: 24
+    available_hours: number
+    missing_hours: number
+    conflicting_hours: number
+  }
   hours: ForecastHour[]
 }
 
+type Scenario = {
+  decisionDate: string
+  cutoffTime: string
+}
+
 type LoadState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'loading'; scenario: Scenario }
+  | { status: 'error'; scenario: Scenario; message: string }
   | { status: 'success'; data: ForecastResponse }
+
+const DEFAULT_SCENARIO: Scenario = {
+  decisionDate: '2026-01-15',
+  cutoffTime: '10:00',
+}
 
 const timestampFormatter = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
@@ -43,12 +63,25 @@ const timestampFormatter = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'UTC',
 })
 
+const dateFormatter = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeZone: 'UTC',
+})
+
 function formatTimestamp(value: string) {
   return `${timestampFormatter.format(new Date(value))} UTC`
 }
 
-async function fetchForecast(): Promise<ForecastResponse> {
-  const response = await fetch('/api/wind-forecast')
+function formatDate(value: string) {
+  return dateFormatter.format(new Date(`${value}T00:00:00Z`))
+}
+
+async function fetchForecast(scenario: Scenario, signal: AbortSignal): Promise<ForecastResponse> {
+  const query = new URLSearchParams({
+    decision_date: scenario.decisionDate,
+    cutoff_time: scenario.cutoffTime,
+  })
+  const response = await fetch(`/api/wind-forecast?${query}`, { signal })
   if (!response.ok) {
     throw new Error(`The forecast service returned HTTP ${response.status}.`)
   }
@@ -90,35 +123,72 @@ function ForecastTable({ hours }: { hours: ForecastHour[] }) {
   )
 }
 
-export function App() {
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
+function Coverage({ data }: { data: ForecastResponse }) {
+  const items = [
+    { label: 'Available', value: data.coverage.available_hours, color: 'green' },
+    { label: 'Missing', value: data.coverage.missing_hours, color: 'gray' },
+    { label: 'Conflicting', value: data.coverage.conflicting_hours, color: 'orange' },
+  ]
 
-  const loadForecast = useCallback(async () => {
-    setState({ status: 'loading' })
+  return (
+    <SimpleGrid columns={{ base: 1, sm: 3 }} gap="3" aria-label="Forecast coverage">
+      {items.map((item) => (
+        <Flex key={item.label} bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="md" p="4" justify="space-between" align="center">
+          <Text color="fg.muted">{item.label}</Text>
+          <Badge colorPalette={item.color} size="lg">{item.value} hours</Badge>
+        </Flex>
+      ))}
+    </SimpleGrid>
+  )
+}
+
+export function App() {
+  const [draft, setDraft] = useState<Scenario>(DEFAULT_SCENARIO)
+  const [state, setState] = useState<LoadState>({ status: 'loading', scenario: DEFAULT_SCENARIO })
+  const activeRequest = useRef<{ id: number; controller: AbortController } | null>(null)
+  const nextRequestId = useRef(0)
+
+  const loadForecast = useCallback(async (scenario: Scenario) => {
+    activeRequest.current?.controller.abort()
+    const controller = new AbortController()
+    const id = ++nextRequestId.current
+    activeRequest.current = { id, controller }
+    setState({ status: 'loading', scenario })
+
     try {
-      const data = await fetchForecast()
-      setState({ status: 'success', data })
+      const data = await fetchForecast(scenario, controller.signal)
+      if (activeRequest.current?.id === id) {
+        setState({ status: 'success', data })
+      }
     } catch (error) {
+      if (controller.signal.aborted || activeRequest.current?.id !== id) return
       const message = error instanceof Error ? error.message : 'An unexpected error occurred.'
-      setState({ status: 'error', message })
+      setState({ status: 'error', scenario, message })
     }
   }, [])
 
   useEffect(() => {
-    let active = true
-    void fetchForecast()
+    const controller = new AbortController()
+    const id = ++nextRequestId.current
+    activeRequest.current = { id, controller }
+
+    void fetchForecast(DEFAULT_SCENARIO, controller.signal)
       .then((data) => {
-        if (active) setState({ status: 'success', data })
+        if (activeRequest.current?.id === id) setState({ status: 'success', data })
       })
       .catch((error: unknown) => {
-        if (!active) return
+        if (controller.signal.aborted || activeRequest.current?.id !== id) return
         const message = error instanceof Error ? error.message : 'An unexpected error occurred.'
-        setState({ status: 'error', message })
+        setState({ status: 'error', scenario: DEFAULT_SCENARIO, message })
       })
-    return () => {
-      active = false
-    }
+
+    return () => controller.abort()
   }, [])
+
+  function applyScenario(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void loadForecast({ ...draft })
+  }
 
   return (
     <Box minH="100vh" bg="bg.subtle" py={{ base: 8, md: 14 }}>
@@ -129,44 +199,45 @@ export function App() {
               Day-ahead forecast review
             </Text>
             <Heading as="h1" size={{ base: '3xl', md: '4xl' }} letterSpacing="tight">
-              Wind forecast available at the decision cutoff
+              Explore January 2026 wind forecasts
             </Heading>
             <Text color="fg.muted" maxW="3xl" fontSize={{ base: 'md', md: 'lg' }}>
-              A fixed January 2026 scenario showing the latest Elexon WINDFOR publication available
-              for each delivery hour. This analysis does not recommend or execute purchases.
+              Choose a UTC decision cutoff to see the latest eligible Elexon WINDFOR publication
+              for each hour of the following delivery day. This analysis does not recommend or execute purchases.
             </Text>
           </Stack>
 
-          <Flex
-            as="section"
-            aria-label="Scenario details"
-            direction={{ base: 'column', md: 'row' }}
-            gap={{ base: 4, md: 10 }}
-            bg="bg.panel"
-            borderWidth="1px"
-            borderColor="border.subtle"
-            rounded="lg"
-            p={{ base: 5, md: 6 }}
-          >
-            <Box>
-              <Text color="fg.muted" fontSize="sm">Decision cutoff</Text>
-              <Text fontWeight="semibold">15 Jan 2026, 10:00 UTC</Text>
+          <form onSubmit={applyScenario}>
+            <Box bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
+              <Stack direction={{ base: 'column', md: 'row' }} gap="4" align={{ md: 'end' }}>
+              <Field.Root required flex="1">
+                <Field.Label>Decision date</Field.Label>
+                <Input
+                  type="date"
+                  min="2026-01-01"
+                  max="2026-01-31"
+                  value={draft.decisionDate}
+                  onChange={(event) => setDraft((current) => ({ ...current, decisionDate: event.target.value }))}
+                />
+              </Field.Root>
+              <Field.Root required flex="1">
+                <Field.Label>Cutoff time (UTC)</Field.Label>
+                <Input
+                  type="time"
+                  value={draft.cutoffTime}
+                  onChange={(event) => setDraft((current) => ({ ...current, cutoffTime: event.target.value }))}
+                />
+              </Field.Root>
+                <Button type="submit" colorPalette="blue" minW={{ md: '28' }}>Apply</Button>
+              </Stack>
             </Box>
-            <Box>
-              <Text color="fg.muted" fontSize="sm">Delivery day</Text>
-              <Text fontWeight="semibold">16 Jan 2026</Text>
-            </Box>
-            <Box>
-              <Text color="fg.muted" fontSize="sm">Source</Text>
-              <Text fontWeight="semibold">Elexon WINDFOR</Text>
-            </Box>
-          </Flex>
+          </form>
 
           {state.status === 'loading' && (
-            <HStack role="status" aria-live="polite" gap="3" py="12" justify="center">
+            <Stack role="status" aria-live="polite" direction="row" gap="3" py="12" justify="center" align="center">
               <Spinner size="sm" />
-              <Text>Loading the wind forecast…</Text>
-            </HStack>
+              <Text>Loading {state.scenario.decisionDate} at {state.scenario.cutoffTime} UTC…</Text>
+            </Stack>
           )}
 
           {state.status === 'error' && (
@@ -175,44 +246,71 @@ export function App() {
               <Box flex="1">
                 <Alert.Title>Forecast unavailable</Alert.Title>
                 <Alert.Description>
-                  {state.message} Try again, or confirm that the backend can reach Elexon.
+                  {state.message} The requested scenario was {state.scenario.decisionDate} at {state.scenario.cutoffTime} UTC.
                 </Alert.Description>
-                <Button mt="4" size="sm" onClick={() => void loadForecast()}>
-                  Try again
-                </Button>
+                <Button mt="4" size="sm" onClick={() => void loadForecast(state.scenario)}>Try again</Button>
               </Box>
             </Alert.Root>
           )}
 
           {state.status === 'success' && (
-            <Stack as="section" aria-labelledby="forecast-table-title" gap="4">
-              <Flex direction={{ base: 'column', md: 'row' }} justify="space-between" gap="2">
+            <Stack gap={{ base: 6, md: 8 }}>
+              <Flex as="section" aria-label="Applied scenario" direction={{ base: 'column', md: 'row' }} gap={{ base: 4, md: 10 }} bg="bg.panel" borderWidth="1px" borderColor="border.subtle" rounded="lg" p={{ base: 5, md: 6 }}>
                 <Box>
-                  <Heading as="h2" id="forecast-table-title" size="xl">
-                    Hourly forecast
-                  </Heading>
-                  <Text color="fg.muted" mt="1">
-                    All timestamps are UTC. Missing generation is never represented as zero.
-                  </Text>
+                  <Text color="fg.muted" fontSize="sm">Applied decision cutoff</Text>
+                  <Text fontWeight="semibold">{formatTimestamp(state.data.decision_time)}</Text>
                 </Box>
-                <Text color="fg.muted" fontSize="sm">
-                  {state.data.hours.filter((hour) => hour.status === 'available').length} of 24 hours available
-                </Text>
+                <Box>
+                  <Text color="fg.muted" fontSize="sm">Derived delivery day</Text>
+                  <Text fontWeight="semibold">{formatDate(state.data.delivery_date)}</Text>
+                </Box>
+                <Box>
+                  <Text color="fg.muted" fontSize="sm">Retrieval window</Text>
+                  <Text fontWeight="semibold">Previous {state.data.retrieval_lookback_hours} hours</Text>
+                </Box>
               </Flex>
 
-              {state.data.hours.every((hour) => hour.status !== 'available') && (
+              <Coverage data={state.data} />
+
+              {(state.data.coverage.missing_hours > 0 || state.data.coverage.conflicting_hours > 0) && (
                 <Alert.Root status="warning">
                   <Alert.Indicator />
                   <Alert.Content>
-                    <Alert.Title>No forecast values found</Alert.Title>
+                    <Alert.Title>Partial forecast coverage</Alert.Title>
                     <Alert.Description>
-                      Elexon returned no usable generation values for this delivery day and cutoff.
+                      Gaps mean no eligible record was found within the 24-hour retrieval window, or duplicate source values conflicted. They are not zero generation.
                     </Alert.Description>
                   </Alert.Content>
                 </Alert.Root>
               )}
 
-              <ForecastTable hours={state.data.hours} />
+              {state.data.coverage.available_hours === 0 && (
+                <Alert.Root status="warning">
+                  <Alert.Indicator />
+                  <Alert.Content>
+                    <Alert.Title>No forecast values found</Alert.Title>
+                    <Alert.Description>
+                      Elexon returned no usable generation values for this delivery day and cutoff within the retrieval window.
+                    </Alert.Description>
+                  </Alert.Content>
+                </Alert.Root>
+              )}
+
+              <Stack as="section" aria-labelledby="forecast-chart-title" gap="3">
+                <Box>
+                  <Heading as="h2" id="forecast-chart-title" size="xl">Forecast profile</Heading>
+                  <Text color="fg.muted" mt="1">Target hour in UTC against forecast generation in MW. Hover or focus points for publication details.</Text>
+                </Box>
+                <ForecastChart hours={state.data.hours} />
+              </Stack>
+
+              <Stack as="section" aria-labelledby="forecast-table-title" gap="3">
+                <Box>
+                  <Heading as="h2" id="forecast-table-title" size="xl">Hourly forecast details</Heading>
+                  <Text color="fg.muted" mt="1">All timestamps are UTC. Missing generation is never represented as zero.</Text>
+                </Box>
+                <ForecastTable hours={state.data.hours} />
+              </Stack>
             </Stack>
           )}
         </Stack>

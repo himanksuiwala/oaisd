@@ -51,4 +51,13 @@ npm run dev
 ```
 
 - Frontend: http://localhost:5173
-- Backend API: http://127.0.0.1:8000/api/test
+- Backend API: http://127.0.0.1:8000/api/wind-forecast
+
+## Phase 1 checks
+
+```bash
+(cd backend && .venv/bin/pytest -q)
+(cd frontend && npm run lint && npm run build)
+```
+
+Open http://localhost:5173 to review the fixed 15 January 2026 decision cutoff and the hourly forecast for delivery on 16 January 2026.

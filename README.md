@@ -1,6 +1,50 @@
 # GridBricks
 
-Minimal full-stack setup with a **FastAPI** backend and a **React TypeScript (Vite)** frontend.
+GridBricks is a pilot wind-forecast analysis portal for an electricity purchasing
+team. It uses a **FastAPI** backend and a **React TypeScript (Vite)** frontend.
+
+## Business Context
+
+An electricity supplier buying power in the UK day-ahead market must make
+purchasing decisions before the delivery day. Wind generation is
+weather-dependent, so the team needs to understand both:
+
+- the latest wind-generation forecast that was available when a decision was
+  made; and
+- how forecasts compared with actual generation historically.
+
+This pilot reconstructs that information for decision dates in January 2026
+using national-level Elexon data. A user selects a decision date and UTC cutoff,
+and the application shows the latest eligible `WINDFOR` forecast for each hour
+of the following delivery day. The optional retrospective comparison aligns
+those forecasts with `FUELHH` actual wind generation and reports MAE, bias, and
+RMSE for matched hours.
+
+The application also includes **Period analysis**. This applies one daily cutoff
+across an inclusive January decision-date range, reports pooled hourly accuracy
+metrics and retrieval coverage, and lets the user investigate individual
+delivery days without issuing another data request.
+
+## Scope and Interpretation
+
+- Forecast comparison is retrospective: actual generation and accuracy metrics
+  were not available at the historical purchasing cutoff.
+- The figures describe national wind generation, not the electricity available
+  to a particular supplier after contracts, demand, or portfolio positions.
+- Historical errors support purchasing judgment; they are not a guaranteed
+  future error range.
+- The pilot does not recommend purchasing quantities, predict prices, or
+  execute trades.
+- The default 10:00 UTC cutoff is a pilot assumption rather than a verified
+  market deadline.
+- Hourly actual generation is derived by averaging the two corresponding
+  half-hourly `FUELHH` readings. Current Elexon documentation does not establish
+  equivalent interval-average semantics for hourly `WINDFOR`, so this remains
+  an explicit comparison convention.
+
+More detailed product assumptions and analytical decisions are recorded in
+[`docs/product-context.md`](docs/product-context.md) and
+[`docs/decisions.md`](docs/decisions.md).
 
 ## Project Structure
 

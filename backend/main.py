@@ -118,7 +118,7 @@ def wind_accuracy(
 
 
 # The production container copies the Vite build here. Keep this mount after all
-# API routes so that /api requests are handled by FastAPI first.
+# API routes so FastAPI handles /api requests before the frontend catch-all.
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

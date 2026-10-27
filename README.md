@@ -61,3 +61,27 @@ npm run dev
 ```
 
 Open http://localhost:5173 to review the fixed 15 January 2026 decision cutoff and the hourly forecast for delivery on 16 January 2026.
+
+## Docker and Vercel
+
+The production image builds the Vite frontend and serves it together with the
+FastAPI API from one container.
+
+Build and run it locally:
+
+```bash
+docker build -f Dockerfile.vercel -t gridbricks .
+docker run --rm -p 8000:8000 -e PORT=8000 gridbricks
+```
+
+Open http://localhost:8000 for the application or
+http://localhost:8000/api/test to check the API.
+
+To deploy, connect this repository to Vercel or run:
+
+```bash
+npx vercel
+```
+
+Vercel automatically detects `Dockerfile.vercel`. Other container platforms
+can use the same file by configuring `Dockerfile.vercel` as the Dockerfile path.

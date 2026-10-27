@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from actuals import (
     WindComparisonResponse,
@@ -112,3 +115,10 @@ def wind_accuracy(
     if result.day_counts.successful_days == 0:
         raise HTTPException(status_code=502, detail=ALL_DAYS_FAILURE_MESSAGE)
     return result
+
+
+# The production container copies the Vite build here. Keep this mount after all
+# API routes so that /api requests are handled by FastAPI first.
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

@@ -90,3 +90,44 @@
 - Use unit tests for cutoff selection, missing hours, and duplicate behavior.
 - Use a mocked FastAPI route test for the backend journey.
 - Use frontend lint/build plus a live full-stack browser review rather than introducing a browser automation framework.
+
+## Single-day workspace layout and scroll boundaries
+
+- Enable the desktop split workspace only when viewport dimensions meet or exceed `1180px` width and `720px` height. Below either threshold, switch to the natural stacked workflow to avoid cramped panes and nested scrollers.
+- In the desktop split workspace, bound the workspace to `calc(100dvh - 88px)` with zero window scroll. The hourly table viewport is the sole internal vertical scroller in the right analytical canvas, preserving stationary views for the applied scenario rail, accuracy strip, profile chart, and selected-hour summary.
+- Guarantee a dedicated vertical table viewport height with sticky table headers and an explicit `24px` bottom clearance buffer so that the final `23:00` row and its action buttons are never clipped or obscured by container borders or scrollbars.
+- Preserve table scroll position across row selection and drawer dismissals by preventing scroll jumps during focus restoration (`preventScroll: true`).
+
+## Information disclosure and overlay hierarchy
+
+- Never conceal critical analytical findings, data gaps, conflict alerts, or retrieval failures behind optional disclosure controls. Warnings, exclusions, and partial coverage statuses must remain immediately visible in the primary canvas.
+- Condense secondary contextual guidance, metric definitions, axis conventions, and table semantics into accessible `InfoPopover` controls (composed with Chakra UI v3 `Popover`, `IconButton`, 40px touch targets, full keyboard support, and focus return).
+- Deep inspection of source readings (half-hourly FUELHH values, publication timestamps, and statuses) is presented exclusively in a slide-out Chakra `Drawer` (`SourceInspector`), avoiding table row expansion, layout shifts, or horizontal table sprawl.
+- Restoring focus upon drawer or dialog dismissal must return exactly to the triggering element.
+
+## Hourly comparison table on-demand presentation and canvas proportions
+
+- Rather than permanently competing for vertical space against the forecast profile chart in split layouts, the 24-row hourly comparison table is presented on demand via a slide-out Chakra `Drawer` (`HourlyBreakdownDrawer`).
+- This grants the `ForecastChart` a generous 350 px height with uncompressed axes and curves while providing a dedicated, spacious 24-row view with sticky headers when requested.
+- Source inspection (`SourceInspector`) remains accessible both from the main canvas `SelectedHourSummary` card and from each row in the on-demand table drawer, using layered z-indices (`1400` and `1600`) for seamless stacking.
+
+## Timezone normalization and input controls
+
+- Remove repeated "UTC" suffix strings across individual timestamp cells, chart labels, and scenario chips. Establish the universal UTC convention in the global header and methodology dialog.
+- Constrain the date picker (`JanuaryDatePicker`) exclusively to January 2026 using Chakra UI v3 `DatePicker`, blocking navigation or selection outside the verified dataset boundary.
+- Integrate a Chakra-styled `TimePicker` with quick operational cutoff presets (`09:00`, `11:00`, `14:00`, etc.) and interactive hour/minute selection, maintaining full 24h format validation.
+
+## Period analysis state presentation
+
+- Mirror the eventual period master/detail geometry during loading so the applied range, master list, and detail canvas do not shift when results arrive.
+- Apply selection motion only to the selected-day detail region. The period overview and daily master list remain stationary, and reduced-motion preferences disable the cue.
+- Keep partial coverage and failed-day consequences visible beside the period overview; information popovers never replace operational warnings.
+- Distinguish an unselected-but-available day from a period with no successful days so empty-detail guidance always names the next available action.
+- Restore focus from mobile detail and hourly overlays with `preventScroll: true` to preserve the master-list position.
+
+## Analysis workflow state lifetime
+
+- Keep both primary analysis workflows mounted while the page is open and hide the inactive workflow with the native `hidden` state.
+- This preserves draft and applied analysis state across Day Analysis and Period Analysis navigation without duplicating request ownership or introducing browser storage.
+- The inactive workflow must remain absent from layout, keyboard navigation, and the accessibility tree.
+- Do not persist analysis state to local storage, session storage, or the URL; a full page refresh intentionally resets both workflows.

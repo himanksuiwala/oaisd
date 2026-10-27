@@ -123,7 +123,9 @@ export function ForecastChart({
 }) {
   const tickFontSize = compact ? 8 : 12
   const labelFontSize = compact ? 7 : 11
-  const yAxisWidth = compact ? 56 : 74
+  // Keep the vertical title in a separate visual column from five-digit ticks.
+  // The compact chart uses an abbreviated unit label and does not need the extra gutter.
+  const yAxisWidth = compact ? 56 : 96
   const chartMargin = compact
     ? { top: 8, right: 12, bottom: 28, left: 4 }
     : { top: 8, right: 18, bottom: 30, left: 8 }
@@ -206,7 +208,7 @@ export function ForecastChart({
                 ? `${value / 1000}k`
                 : value.toLocaleString('en-GB')
             )}
-            label={{ value: compact ? 'MW' : 'Generation (MW)', angle: -90, position: 'insideLeft', offset: compact ? 8 : 8, fill: CHART_COLORS.axis, fontSize: labelFontSize, fontWeight: compact ? 400 : 500 }}
+            label={{ value: compact ? 'MW' : 'Generation (MW)', angle: -90, position: 'insideLeft', offset: compact ? 8 : 4, fill: CHART_COLORS.axis, fontSize: labelFontSize, fontWeight: compact ? 400 : 500 }}
           />
           <Tooltip content={ForecastTooltip} cursor={{ stroke: CHART_COLORS.exception, strokeWidth: 1.5, strokeDasharray: '4 4' }} />
           <Line
